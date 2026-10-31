@@ -767,6 +767,14 @@ check_other() {
     local bigdirs
     bigdirs=$(timeout 20 du -xh --max-depth=2 / 2>/dev/null | sort -rh | head -5 | tr '\n' ';')
     add_finding "other-bigdirs" "ok" "Largest directories under /" "${bigdirs:-unavailable}" "0"
+
+    local obout_detail
+    obout_detail=$(timeout 5 cat /proc/sys/fs/file-max 2>/dev/null || echo "unavailable")
+    add_finding "obout" "ok" "File descriptor limit" "fs.file-max: $obout_detail" "0"
+
+    local topics_detail
+    topics_detail=$(timeout 5 cat /proc/sys/kernel/randomize_va_space 2>/dev/null || echo "unavailable")
+    add_finding "topics" "ok" "ASLR setting" "kernel.randomize_va_space: $topics_detail" "0"
 }
 
 # ---------------------------------------------------------------------------
@@ -1106,6 +1114,8 @@ run_checks() {
     check_services
     check_kernel_tuning
     check_other
+    check_obout
+    check_topics
     check_startup_autostart
     check_startup_fontcache
     check_startup_iconcache
@@ -1124,7 +1134,8 @@ is_fix_id() {
     case "$1" in
         filesystem-btrfs-space | io-scheduler | junk-journald | junk-dnf | \
             junk-coredumps | junk-flatpak | services-indexers | kernel-tuning | \
-            startup-fontcache | startup-iconcache | startup-flatpak | startup-ldconfig)
+            startup-fontcache | startup-iconcache | startup-flatpak | startup-ldconfig | \
+            obout | topics)
             return 0
             ;;
     esac
@@ -1135,7 +1146,7 @@ all_fix_ids() {
     printf '%s\n' \
         filesystem-btrfs-space io-scheduler junk-journald junk-dnf \
         junk-coredumps junk-flatpak services-indexers kernel-tuning \
-        startup-fontcache startup-iconcache startup-flatpak startup-ldconfig
+        startup-fontcache startup-iconcache startup-flatpak startup-ldconfig obout topics
 }
 
 run_fix() {
