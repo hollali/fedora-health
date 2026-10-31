@@ -1,0 +1,17 @@
+[Unit]
+Description=Warm configured apps into the page cache (hdd-watch)
+Documentation=file:///usr/local/share/doc/hdd-watch/README.md
+After=graphical.target
+ConditionPathExists=/usr/local/bin/hdd-watch
+ConditionPathExists=/etc/hdd-watch/prewarm.conf
+
+[Service]
+Type=oneshot
+ExecCondition=/bin/sh -c 'grep -qvE "^[[:space:]]*(#|$)" /etc/hdd-watch/prewarm.conf'
+ExecStart=/usr/local/bin/hdd-watch prewarm
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=180
+
+[Install]
+WantedBy=graphical.target

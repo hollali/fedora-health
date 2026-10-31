@@ -1,0 +1,17 @@
+[Unit]
+Description=hdd-watch disk pressure sampler
+Documentation=file:///usr/local/share/doc/hdd-watch/README.md
+After=local-fs.target
+ConditionPathExists=/usr/local/bin/hdd-watch
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hdd-watch watch 5
+Nice=19
+IOSchedulingClass=idle
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

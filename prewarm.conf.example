@@ -1,0 +1,21 @@
+# /etc/hdd-watch/prewarm.conf
+#
+# One entry per line. Entries may be:
+#   - a .desktop id, e.g. firefox.desktop
+#   - an absolute command path, e.g. /usr/bin/code
+#   - a command with arguments, e.g. /usr/bin/nautilus --new-window
+#
+# Each entry is resolved to real files with ldd and cached with idle I/O
+# priority. hdd-watch refuses to warm if the selected files are more than
+# 25% of MemAvailable, so this cannot intentionally evict your working set.
+#
+# Add entries from the TUI (Launch tab, key p) or manually, then test with:
+#   sudo hdd-watch prewarm
+#
+# Only warm apps that actually showed a large cold/warm difference:
+#   hdd-watch launches
+#   hdd-watch prewarm --suggest
+
+# firefox.desktop
+# code.desktop
+# org.gnome.Nautilus.desktop
