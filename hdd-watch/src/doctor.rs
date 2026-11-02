@@ -486,6 +486,59 @@ pub fn run_fix_streaming(id: &str, sender: Sender<FixEvent>) {
     }
 }
 
+pub fn run_fix_all_streaming(sender: Sender<FixEvent>) {
+    let script = match script_path() {
+        Ok(script) => script,
+        Err(err) => {
+            let _ = sender.send(FixEvent::Done(Err(err)));
+            return;
+        }
+    };
+    let mut child = match Command::new(&script)
+        .arg("--fix")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => {
+            let _ = sender.send(FixEvent::Done(Err(format!("cannot run fix: {err}"))));
+            return;
+        }
+    };
+    let mut readers = Vec::new();
+    if let Some(stdout) = child.stdout.take() {
+        let tx = sender.clone();
+        readers.push(thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                let _ = tx.send(FixEvent::Line(line));
+            }
+        }));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        let tx = sender.clone();
+        readers.push(thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                let _ = tx.send(FixEvent::Line(line));
+            }
+        }));
+    }
+    for reader in readers {
+        let _ = reader.join();
+    }
+    match child.wait() {
+        Ok(status) if status.success() => {
+            let _ = sender.send(FixEvent::Done(Ok(())));
+        }
+        Ok(status) => {
+            let _ = sender.send(FixEvent::Done(Err(format!("fix exited with {status}"))));
+        }
+        Err(err) => {
+            let _ = sender.send(FixEvent::Done(Err(format!("cannot wait for fix: {err}"))));
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SmartInfo {
     pub device: String,

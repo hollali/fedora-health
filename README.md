@@ -1,4 +1,4 @@
-# fedora-slowdown
+# fedora-health
 
 Diagnose and fix a Fedora system that feels slow because of a spinning disk:
 I/O pressure sampling, startup benchmarking, a startup audit, safe system
@@ -201,7 +201,7 @@ Tabs: **Live**, **History**, **Doctor**, **Disk**, **Launch**.
 - `?`: help, `q`: quit
 - Live: `s` sort processes, space pause
 - History: `h`/`l` scroll, `+`/`-` zoom
-- Doctor: `r` re-check, `f` preview and confirm a fix
+- Doctor: `r` re-check, `f` preview and confirm a fix, `a` fix all safe fixes
 - Disk: `r` reload
 - Launch: `/` filter apps, `Enter` warm benchmark, `c` cold benchmark, `p`
   add to prewarm.conf

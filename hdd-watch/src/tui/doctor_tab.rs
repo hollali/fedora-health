@@ -48,7 +48,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .block(
             Block::bordered()
                 .title(" Finding detail ")
-                .title_bottom(" r re-check  f fix "),
+                .title_bottom(" r re-check  f fix  a fix all "),
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(detail, right[0]);

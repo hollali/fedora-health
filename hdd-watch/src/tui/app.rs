@@ -112,6 +112,7 @@ pub enum ConfirmAction {
     Prewarm {
         app_index: usize,
     },
+    FixAll,
 }
 
 #[derive(Clone, Debug)]
@@ -598,6 +599,7 @@ impl App {
             }
             KeyCode::Char('3') => {
                 self.tab = Tab::Doctor;
+                self.on_tab_change(tx);
                 return;
             }
             KeyCode::Char('4') => {
@@ -660,6 +662,8 @@ impl App {
                     self.refresh_doctor(tx.clone());
                 } else if key.code == KeyCode::Char('f') {
                     self.request_fix(tx);
+                } else if key.code == KeyCode::Char('a') {
+                    self.request_fix_all(tx);
                 }
             }
             Tab::Disk => {
@@ -689,9 +693,13 @@ impl App {
         }
     }
 
-    fn on_tab_change(&mut self, _tx: &Sender<AppEvent>) {
+    fn on_tab_change(&mut self, tx: &Sender<AppEvent>) {
         if self.tab == Tab::History && !self.demo {
             self.reload_history();
+        }
+        if self.tab == Tab::Doctor {
+            self.status = "re-running doctor checks...".to_string();
+            self.refresh_doctor(tx.clone());
         }
     }
 
@@ -747,6 +755,10 @@ impl App {
                     && matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q'))
                 {
                     self.popup = None;
+                    if !self.demo {
+                        self.status = "re-running doctor checks...".to_string();
+                        self.refresh_doctor(tx.clone());
+                    }
                 }
             }
             Popup::Confirm { action, .. } => {
@@ -780,6 +792,9 @@ impl App {
                         }
                         ConfirmAction::Prewarm { app_index } => {
                             self.add_prewarm(app_index);
+                        }
+                        ConfirmAction::FixAll => {
+                            self.start_fix_all(tx);
                         }
                     }
                 } else if matches!(
@@ -948,6 +963,75 @@ impl App {
         thread::spawn(move || {
             let result = doctor::run_fix_preview(&id);
             let _ = tx.send(AppEvent::FixPreview { id, result });
+        });
+    }
+
+    fn request_fix_all(&mut self, _tx: &Sender<AppEvent>) {
+        if self.doctor.is_empty() {
+            self.status = "no findings to fix".to_string();
+            return;
+        }
+        let fixable: Vec<&str> = self
+            .doctor
+            .iter()
+            .filter(|finding| finding.fix_available)
+            .map(|finding| finding.id.as_str())
+            .collect();
+        if fixable.is_empty() {
+            self.status = "no findings have a safe automatic fix".to_string();
+            return;
+        }
+        if self.demo {
+            self.popup = Some(Popup::Confirm {
+                title: "Fix all safe fixes?".into(),
+                body: format!(
+                    "DEMO: would run all safe fixes: {}",
+                    fixable.join(", ")
+                ),
+                action: ConfirmAction::FixAll,
+            });
+            return;
+        }
+        if !logfmt::is_root() {
+            self.popup = Some(Popup::Error {
+                title: "Root required".into(),
+                body: "Fixes require root. Run hdd-watch with sudo to apply them.".into(),
+            });
+            return;
+        }
+        self.popup = Some(Popup::Confirm {
+            title: "Fix all safe fixes?".into(),
+            body: format!(
+                "This runs every safe, idempotent fix that applies to the current findings:\n\n{}\n\nPreview first with: sudo fedora-doctor.sh --dry-run",
+                fixable.join("\n")
+            ),
+            action: ConfirmAction::FixAll,
+        });
+    }
+
+    fn start_fix_all(&mut self, tx: &Sender<AppEvent>) {
+        self.popup = Some(Popup::FixRun {
+            id: "all".to_string(),
+            lines: vec!["running sudo fedora-doctor.sh --fix".to_string()],
+            done: None,
+        });
+        if self.demo {
+            self.status = "DEMO: would run all safe fixes".to_string();
+            return;
+        }
+        let (fix_tx, fix_rx) = mpsc::channel();
+        thread::spawn(move || doctor::run_fix_all_streaming(fix_tx));
+        let tx = tx.clone();
+        thread::spawn(move || {
+            while let Ok(event) = fix_rx.recv() {
+                let event = match event {
+                    doctor::FixEvent::Line(line) => AppEvent::FixLine(line),
+                    doctor::FixEvent::Done(result) => AppEvent::FixDone(result),
+                };
+                if tx.send(event).is_err() {
+                    break;
+                }
+            }
         });
     }
 
@@ -1152,6 +1236,7 @@ fn help_text() -> String {
         "Doctor",
         "  up/down or k/j       select finding",
         "  f                    preview and confirm a fix",
+        "  a                    fix all safe fixes (confirmation)",
         "  r                    re-run checks and startup audit",
         "",
         "Disk",
