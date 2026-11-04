@@ -159,7 +159,7 @@ pub fn fake_findings() -> Vec<Finding> {
             "services-slowboot",
             Severity::Bad,
             "Slow boot",
-            "Total 2min 14.203s (2min 1.872s in userspace). Slowest units: plocate-updatedb 10m 46s; fwupd 2m 57s. Delay-prone units enabled: NetworkManager-wait-online.service.",
+            "Total 2min 14.203s (2min 1.872s in userspace). Slowest services: docker 1min 55s; mariadb 1min 38s; fwupd 1min 32s. Planned: switch docker to socket activation; switch mariadb to socket activation; run fwupd after login; delay postgresql until after boot.",
             true,
         ),
         (

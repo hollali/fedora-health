@@ -199,6 +199,39 @@ systemd_time_secs() {
     }'
 }
 
+unit_is_enabled() {
+    case "$(systemctl is-enabled "$1" 2>/dev/null || true)" in
+        enabled | enabled-runtime) return 0 ;;
+    esac
+    return 1
+}
+
+boot_service_blame() {
+    systemd-analyze blame --no-pager 2>/dev/null | awk '
+        /\.service[[:space:]]*$/ {
+            unit = $NF
+            time = $0
+            sub(/[[:space:]]+[^[:space:]]+[[:space:]]*$/, "", time)
+            total = 0
+            count = split(time, parts, /[[:space:]]+/)
+            for (i = 1; i <= count; i++) {
+                part = parts[i]
+                if (part ~ /ms$/) { sub(/ms$/, "", part); total += part / 1000 }
+                else if (part ~ /min$/) { sub(/min$/, "", part); total += part * 60 }
+                else if (part ~ /h$/) { sub(/h$/, "", part); total += part * 3600 }
+                else if (part ~ /s$/) { sub(/s$/, "", part); total += part }
+            }
+            printf "%s\t%d\t%s\n", unit, total, time
+        }
+    '
+}
+
+service_socket_activates() {
+    local service=$1 socket=$2
+    systemctl cat "$socket" >/dev/null 2>&1 || return 1
+    systemctl show -p Triggers "$socket" 2>/dev/null | grep -q -- "$service"
+}
+
 as_real_user() {
     if [[ ${EUID:-$(id -u)} -eq 0 && $REAL_USER != "root" ]]; then
         sudo -u "$REAL_USER" env HOME="$REAL_HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME" "$@"
@@ -651,8 +684,10 @@ fix_junk_flatpak() {
 # 6. Background services
 # ---------------------------------------------------------------------------
 check_services() {
-    local failed failed_count blame indexers boot_report boot_total boot_userspace boot_secs
-    local boot_fix_units unit state boot_severity boot_detail
+    local failed failed_count indexers boot_report boot_total boot_userspace boot_secs
+    local unit state boot_severity boot_detail slow_detail boot_actions unit_secs unit_time applied
+    local -a boot_order=()
+    local -A boot_seconds=()
     failed=$(systemctl --failed --no-legend --no-pager 2>/dev/null | sed '/^[[:space:]]*$/d')
     failed_count=$(printf '%s\n' "$failed" | sed '/^[[:space:]]*$/d' | wc -l)
     if ((failed_count > 0)); then
@@ -666,36 +701,91 @@ check_services() {
     boot_total=$(printf '%s\n' "$boot_report" | sed -n 's/.*= //p' | head -1)
     boot_userspace=$(printf '%s\n' "$boot_report" | sed -n 's/.*reached after \(.*\) in userspace.*/\1/p' | head -1)
     boot_secs=$(systemd_time_secs "${boot_userspace:-}")
-    blame=$(systemd-analyze blame 2>/dev/null | head -5 | tr '\n' ';')
     boot_severity="ok"
     if ((boot_secs >= 120)); then
         boot_severity="bad"
     elif ((boot_secs >= 60)); then
         boot_severity="warn"
     fi
-    boot_fix_units=""
-    if systemctl cat NetworkManager-wait-online.service >/dev/null 2>&1; then
-        state=$(systemctl is-enabled NetworkManager-wait-online.service 2>/dev/null || true)
-        case "$state" in
-            enabled | enabled-runtime) boot_fix_units+="NetworkManager-wait-online.service " ;;
-        esac
+
+    slow_detail=""
+    while IFS=$'\t' read -r unit unit_secs unit_time; do
+        [[ -n $unit ]] || continue
+        boot_order+=("$unit")
+        boot_seconds["$unit"]=$unit_secs
+        if ((${#boot_order[@]} <= 6)); then
+            slow_detail+="${unit%.service} ${unit_time}; "
+        fi
+    done < <(boot_service_blame)
+
+    boot_actions=""
+    if systemctl cat NetworkManager-wait-online.service >/dev/null 2>&1 &&
+        unit_is_enabled NetworkManager-wait-online.service; then
+        boot_actions+="disable NetworkManager-wait-online; "
     fi
     if systemctl cat plymouth-quit-wait.service >/dev/null 2>&1; then
         state=$(systemctl is-enabled plymouth-quit-wait.service 2>/dev/null || true)
         if [[ $state != "masked" ]]; then
-            boot_fix_units+="plymouth-quit-wait.service "
+            boot_actions+="mask plymouth-quit-wait; "
         fi
     fi
+    if systemctl cat docker.service >/dev/null 2>&1 &&
+        service_socket_activates docker.service docker.socket &&
+        unit_is_enabled docker.service; then
+        boot_actions+="switch docker to socket activation; "
+    fi
+    if systemctl cat mariadb.service >/dev/null 2>&1 &&
+        service_socket_activates mariadb.service mariadb.socket &&
+        unit_is_enabled mariadb.service; then
+        boot_actions+="switch mariadb to socket activation; "
+    fi
+    if systemctl cat fwupd.service >/dev/null 2>&1 &&
+        [[ ! -f /etc/systemd/system/fwupd.service.d/50-hdd-watch-boot.conf ]] &&
+        systemctl show -p Before fwupd.service 2>/dev/null | grep -q 'gdm.service'; then
+        boot_actions+="run fwupd after login; "
+    fi
+    for unit in postgresql.service php-fpm.service abrtd.service; do
+        if systemctl cat "$unit" >/dev/null 2>&1 && unit_is_enabled "$unit" &&
+            ((${boot_seconds[$unit]:-0} >= 20)); then
+            boot_actions+="delay ${unit%.service} until after boot; "
+        fi
+    done
+
     if [[ -z $boot_userspace ]]; then
         add_finding "services-slowboot" "ok" "Boot time" \
-            "${blame:-systemd-analyze blame unavailable} (information only)." "0"
+            "systemd-analyze blame unavailable (information only)." "0"
     else
-        boot_detail="Total ${boot_total:-unknown} (${boot_userspace} in userspace). Slowest units: ${blame:-unavailable}"
-        if [[ -n ${boot_fix_units// /} && $boot_severity != "ok" ]]; then
-            boot_detail+=" Delay-prone units enabled: ${boot_fix_units}They can be disabled to shorten boot."
+        boot_detail="Total ${boot_total:-unknown} (${boot_userspace} in userspace). Slowest services: ${slow_detail:-unavailable}"
+        if [[ -n $boot_actions && $boot_severity != "ok" ]]; then
+            boot_detail+=" Planned: ${boot_actions}Services stay available but start on demand or shortly after boot."
             add_finding "services-slowboot" "$boot_severity" "Slow boot" "$boot_detail" "1"
+        elif [[ $boot_severity != "ok" ]]; then
+            applied=""
+            if systemctl cat docker.socket >/dev/null 2>&1 && unit_is_enabled docker.socket &&
+                ! unit_is_enabled docker.service; then
+                applied+="docker "
+            fi
+            if systemctl cat mariadb.socket >/dev/null 2>&1 && unit_is_enabled mariadb.socket &&
+                ! unit_is_enabled mariadb.service; then
+                applied+="mariadb "
+            fi
+            if [[ -f /etc/systemd/system/fwupd.service.d/50-hdd-watch-boot.conf ]]; then
+                applied+="fwupd "
+            fi
+            for unit in postgresql.service php-fpm.service abrtd.service; do
+                if [[ -f "/etc/systemd/system/boot-delay-${unit%.service}.timer" ]] &&
+                    ! unit_is_enabled "$unit"; then
+                    applied+="${unit%.service} "
+                fi
+            done
+            if [[ -n $applied ]]; then
+                boot_detail+=" Boot optimizations are already applied for: ${applied}Reboot to measure the new boot time."
+            else
+                boot_detail+=" No safe automatic boot action was found; review the services above."
+            fi
+            add_finding "services-slowboot" "$boot_severity" "Boot time" "$boot_detail" "0"
         else
-            add_finding "services-slowboot" "$boot_severity" "Boot time" "$boot_detail." "0"
+            add_finding "services-slowboot" "$boot_severity" "Boot time" "$boot_detail" "0"
         fi
     fi
 
@@ -752,8 +842,145 @@ fix_services_indexers() {
     fi
 }
 
+disable_boot_unit() {
+    local unit=$1 message=$2
+    if ! systemctl cat "$unit" >/dev/null 2>&1; then
+        printf 'skipping %s: not installed\n' "$unit"
+        return 1
+    fi
+    if ! unit_is_enabled "$unit"; then
+        printf 'skipping %s: already disabled (%s)\n' "$unit" "$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+        return 1
+    fi
+    if ((DRY_RUN == 1)); then
+        printf 'systemctl disable %s\n' "$unit"
+    else
+        systemctl disable "$unit" >/dev/null 2>&1 || true
+        printf 'disabled %s; %s\n' "$unit" "$message"
+    fi
+    return 0
+}
+
+mask_boot_unit() {
+    local unit=$1 message=$2
+    if ! systemctl cat "$unit" >/dev/null 2>&1; then
+        printf 'skipping %s: not installed\n' "$unit"
+        return 1
+    fi
+    if [[ $(systemctl is-enabled "$unit" 2>/dev/null || true) == "masked" ]]; then
+        printf 'skipping %s: already masked\n' "$unit"
+        return 1
+    fi
+    if ((DRY_RUN == 1)); then
+        printf 'systemctl mask %s\n' "$unit"
+    else
+        systemctl mask "$unit" >/dev/null 2>&1 || true
+        printf 'masked %s; %s\n' "$unit" "$message"
+    fi
+    return 0
+}
+
+socket_activate_boot_service() {
+    local service=$1 socket=$2
+    if ! systemctl cat "$service" >/dev/null 2>&1; then
+        printf 'skipping %s: not installed\n' "$service"
+        return 1
+    fi
+    if ! service_socket_activates "$service" "$socket"; then
+        printf 'skipping %s: no socket activation unit\n' "$service"
+        return 1
+    fi
+    if ! unit_is_enabled "$service"; then
+        if unit_is_enabled "$socket"; then
+            printf 'skipping %s: already socket-activated\n' "$service"
+        else
+            printf 'skipping %s: already disabled (%s)\n' "$service" "$(systemctl is-enabled "$service" 2>/dev/null || true)"
+        fi
+        return 1
+    fi
+    if ((DRY_RUN == 1)); then
+        printf 'systemctl enable %s\n' "$socket"
+        printf 'systemctl disable %s\n' "$service"
+        return 0
+    fi
+    systemctl enable "$socket" >/dev/null 2>&1 || true
+    systemctl disable "$service" >/dev/null 2>&1 || true
+    printf 'enabled %s and disabled %s; %s now starts on first use\n' \
+        "$socket" "$service" "${service%.service}"
+    return 0
+}
+
+defer_boot_service() {
+    local unit=$1 delay=${2:-120}
+    local timer="/etc/systemd/system/boot-delay-${unit%.service}.timer"
+    if ! systemctl cat "$unit" >/dev/null 2>&1; then
+        printf 'skipping %s: not installed\n' "$unit"
+        return 1
+    fi
+    if ! unit_is_enabled "$unit"; then
+        printf 'skipping %s: already starts after boot (%s)\n' "$unit" "$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+        return 1
+    fi
+    if ((DRY_RUN == 1)); then
+        printf 'cat > %s <<'\''EOF'\''\n' "$timer"
+        printf '[Unit]\nDescription=Delay %s until after boot\n\n[Timer]\nOnBootSec=%ss\nUnit=%s\n\n[Install]\nWantedBy=timers.target\nEOF\n' \
+            "$unit" "$delay" "$unit"
+        printf 'systemctl daemon-reload\n'
+        printf 'systemctl disable %s\n' "$unit"
+        printf 'systemctl enable %s\n' "$timer"
+        return 0
+    fi
+    if [[ ! -f $timer ]]; then
+        cat >"$timer" <<EOF
+[Unit]
+Description=Delay $unit until after boot
+
+[Timer]
+OnBootSec=${delay}s
+Unit=$unit
+
+[Install]
+WantedBy=timers.target
+EOF
+        chmod 0644 "$timer"
+    fi
+    systemctl disable "$unit" >/dev/null 2>&1 || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable "$timer" >/dev/null 2>&1 || true
+    printf 'deferred %s until %ss after boot; it still starts automatically\n' "$unit" "$delay"
+    return 0
+}
+
+order_fwupd_after_login() {
+    local dir="/etc/systemd/system/fwupd.service.d"
+    local file="$dir/50-hdd-watch-boot.conf"
+    if ! systemctl cat fwupd.service >/dev/null 2>&1; then
+        printf 'skipping fwupd: not installed\n'
+        return 1
+    fi
+    if [[ -f $file ]]; then
+        printf 'skipping fwupd: already ordered after login\n'
+        return 1
+    fi
+    if ! systemctl show -p Before fwupd.service 2>/dev/null | grep -q 'gdm.service'; then
+        printf 'skipping fwupd: it is not ordered before gdm\n'
+        return 1
+    fi
+    if ((DRY_RUN == 1)); then
+        printf 'mkdir -p %s\n' "$dir"
+        printf "printf '[Unit]\\\\nBefore=\\\\n' > %s\n" "$file"
+        printf 'systemctl daemon-reload\n'
+        return 0
+    fi
+    mkdir -p "$dir"
+    printf '[Unit]\nBefore=\n' >"$file"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    printf 'removed fwupd ordering before gdm; firmware checks no longer block login\n'
+    return 0
+}
+
 fix_services_slowboot() {
-    local boot_userspace boot_secs unit state did=0
+    local boot_userspace boot_secs unit slow did=0
     boot_userspace=$(systemd-analyze 2>/dev/null | sed -n 's/.*reached after \(.*\) in userspace.*/\1/p' | head -1)
     boot_secs=$(systemd_time_secs "${boot_userspace:-}")
     if ((boot_secs < 60)); then
@@ -761,47 +988,27 @@ fix_services_slowboot() {
         return
     fi
 
-    unit="NetworkManager-wait-online.service"
-    if systemctl cat "$unit" >/dev/null 2>&1; then
-        state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
-        case "$state" in
-            enabled | enabled-runtime)
-                if ((DRY_RUN == 1)); then
-                    printf 'systemctl disable %s\n' "$unit"
-                else
-                    systemctl disable "$unit" >/dev/null 2>&1 || true
-                    printf 'disabled %s; network-online.target no longer blocks boot\n' "$unit"
-                fi
-                did=1
-                ;;
-            *)
-                printf 'skipping %s: already disabled (%s)\n' "$unit" "${state:-unknown}"
-                ;;
-        esac
-    else
-        printf 'skipping %s: not installed\n' "$unit"
-    fi
+    slow=$(boot_service_blame | awk '$2 >= 20 {print $1}')
 
-    unit="plymouth-quit-wait.service"
-    if systemctl cat "$unit" >/dev/null 2>&1; then
-        state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
-        if [[ $state == "masked" ]]; then
-            printf 'skipping %s: already masked\n' "$unit"
+    disable_boot_unit "NetworkManager-wait-online.service" \
+        "network-online.target no longer blocks boot" && did=1
+    mask_boot_unit "plymouth-quit-wait.service" \
+        "boot no longer waits for plymouth to quit" && did=1
+    socket_activate_boot_service "docker.service" "docker.socket" && did=1
+    socket_activate_boot_service "mariadb.service" "mariadb.socket" && did=1
+    order_fwupd_after_login && did=1
+    for unit in postgresql.service php-fpm.service abrtd.service; do
+        if printf '%s\n' "$slow" | grep -qx -- "$unit"; then
+            defer_boot_service "$unit" 120 && did=1
         else
-            if ((DRY_RUN == 1)); then
-                printf 'systemctl mask %s\n' "$unit"
-            else
-                systemctl mask "$unit" >/dev/null 2>&1 || true
-                printf 'masked %s; boot no longer waits for plymouth to quit\n' "$unit"
-            fi
-            did=1
+            printf 'skipping %s: it is not a slow boot unit\n' "$unit"
         fi
-    else
-        printf 'skipping %s: not installed\n' "$unit"
-    fi
+    done
 
     if ((did == 0)); then
-        printf 'no delay-prone boot units needed changing\n'
+        printf 'no boot units needed changing\n'
+    else
+        printf '\nchanges take effect on the next boot; the current boot is unchanged\n'
     fi
 }
 

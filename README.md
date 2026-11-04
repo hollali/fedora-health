@@ -78,7 +78,7 @@ Fix IDs:
 | `junk-coredumps` | Remove old coredumps after reporting the count |
 | `junk-flatpak` | Remove unused Flatpak runtimes |
 | `services-indexers` | Stop running tracker/baloo indexers for this session |
-| `services-slowboot` | On slow boots, disable `NetworkManager-wait-online` and mask `plymouth-quit-wait` |
+| `services-slowboot` | On slow boots, move measured bottlenecks off the boot critical path (see below) |
 | `kernel-tuning` | Install the HDD sysctl profile |
 | `startup-fontcache` | Rebuild the font cache |
 | `startup-iconcache` | Rebuild icon/desktop caches |
@@ -86,10 +86,29 @@ Fix IDs:
 | `startup-ldconfig` | Refresh the shared-library cache |
 
 `services-slowboot` only acts when the last boot took at least 60 seconds in
-userspace. It disables `NetworkManager-wait-online.service` and masks
-`plymouth-quit-wait.service`, both of which commonly delay boot on slow disks.
-Re-enable them with `sudo systemctl enable NetworkManager-wait-online.service`
-and `sudo systemctl unmask plymouth-quit-wait.service`.
+userspace. It reads `systemd-analyze blame` and targets the units that actually
+delayed that boot instead of assuming a fixed pair of units:
+
+- Docker and MariaDB are switched to socket activation, so they start on first
+  use instead of during boot.
+- PostgreSQL, PHP-FPM and ABRT are started by a timer two minutes after boot,
+  so they still come up automatically.
+- `fwupd` keeps working but is no longer ordered before GDM, so firmware checks
+  do not block login.
+- `NetworkManager-wait-online.service` is disabled and
+  `plymouth-quit-wait.service` is masked.
+
+The commands apply immediately and take effect on the next boot. To undo them:
+
+```bash
+sudo systemctl enable NetworkManager-wait-online.service
+sudo systemctl unmask plymouth-quit-wait.service
+sudo systemctl enable docker.service mariadb.service postgresql.service php-fpm.service abrtd.service
+sudo systemctl disable docker.socket mariadb.socket \
+    boot-delay-postgresql.timer boot-delay-php-fpm.timer boot-delay-abrtd.timer
+sudo rm -f /etc/systemd/system/fwupd.service.d/50-hdd-watch-boot.conf
+sudo systemctl daemon-reload
+```
 
 Review the dry-run output before applying anything. In particular, a btrfs
 balance can take a long time and should be done on a backed-up, idle machine.
