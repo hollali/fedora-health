@@ -175,6 +175,30 @@ trim() {
     printf '%s' "$value"
 }
 
+systemd_time_secs() {
+    awk -v value="$1" 'BEGIN {
+        total = 0
+        count = split(value, parts, /[[:space:]]+/)
+        for (i = 1; i <= count; i++) {
+            part = parts[i]
+            if (part ~ /ms$/) {
+                sub(/ms$/, "", part)
+                total += part / 1000
+            } else if (part ~ /min$/) {
+                sub(/min$/, "", part)
+                total += part * 60
+            } else if (part ~ /h$/) {
+                sub(/h$/, "", part)
+                total += part * 3600
+            } else if (part ~ /s$/) {
+                sub(/s$/, "", part)
+                total += part
+            }
+        }
+        printf "%d", total
+    }'
+}
+
 as_real_user() {
     if [[ ${EUID:-$(id -u)} -eq 0 && $REAL_USER != "root" ]]; then
         sudo -u "$REAL_USER" env HOME="$REAL_HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME" "$@"
@@ -627,7 +651,8 @@ fix_junk_flatpak() {
 # 6. Background services
 # ---------------------------------------------------------------------------
 check_services() {
-    local failed failed_count blame indexers
+    local failed failed_count blame indexers boot_report boot_total boot_userspace boot_secs
+    local boot_fix_units unit state boot_severity boot_detail
     failed=$(systemctl --failed --no-legend --no-pager 2>/dev/null | sed '/^[[:space:]]*$/d')
     failed_count=$(printf '%s\n' "$failed" | sed '/^[[:space:]]*$/d' | wc -l)
     if ((failed_count > 0)); then
@@ -637,9 +662,42 @@ check_services() {
         add_finding "services-failed" "ok" "Failed systemd units" "None." "0"
     fi
 
+    boot_report=$(systemd-analyze 2>/dev/null)
+    boot_total=$(printf '%s\n' "$boot_report" | sed -n 's/.*= //p' | head -1)
+    boot_userspace=$(printf '%s\n' "$boot_report" | sed -n 's/.*reached after \(.*\) in userspace.*/\1/p' | head -1)
+    boot_secs=$(systemd_time_secs "${boot_userspace:-}")
     blame=$(systemd-analyze blame 2>/dev/null | head -5 | tr '\n' ';')
-    add_finding "services-slowboot" "ok" "Slowest boot units" \
-        "${blame:-systemd-analyze blame unavailable} (information only)." "0"
+    boot_severity="ok"
+    if ((boot_secs >= 120)); then
+        boot_severity="bad"
+    elif ((boot_secs >= 60)); then
+        boot_severity="warn"
+    fi
+    boot_fix_units=""
+    if systemctl cat NetworkManager-wait-online.service >/dev/null 2>&1; then
+        state=$(systemctl is-enabled NetworkManager-wait-online.service 2>/dev/null || true)
+        case "$state" in
+            enabled | enabled-runtime) boot_fix_units+="NetworkManager-wait-online.service " ;;
+        esac
+    fi
+    if systemctl cat plymouth-quit-wait.service >/dev/null 2>&1; then
+        state=$(systemctl is-enabled plymouth-quit-wait.service 2>/dev/null || true)
+        if [[ $state != "masked" ]]; then
+            boot_fix_units+="plymouth-quit-wait.service "
+        fi
+    fi
+    if [[ -z $boot_userspace ]]; then
+        add_finding "services-slowboot" "ok" "Boot time" \
+            "${blame:-systemd-analyze blame unavailable} (information only)." "0"
+    else
+        boot_detail="Total ${boot_total:-unknown} (${boot_userspace} in userspace). Slowest units: ${blame:-unavailable}"
+        if [[ -n ${boot_fix_units// /} && $boot_severity != "ok" ]]; then
+            boot_detail+=" Delay-prone units enabled: ${boot_fix_units}They can be disabled to shorten boot."
+            add_finding "services-slowboot" "$boot_severity" "Slow boot" "$boot_detail" "1"
+        else
+            add_finding "services-slowboot" "$boot_severity" "Boot time" "$boot_detail." "0"
+        fi
+    fi
 
     indexers=$(ps -eo comm= 2>/dev/null | awk '$1 ~ /^tracker-/ || $1 == "baloo_file" || $1 == "balooctl" {print $1}' | sort -u | tr '\n' ' ')
     if [[ -n ${indexers// /} ]]; then
@@ -691,6 +749,59 @@ fix_services_indexers() {
     fi
     if ((did == 0)); then
         printf 'tracker and baloo are not installed; nothing to mask\n'
+    fi
+}
+
+fix_services_slowboot() {
+    local boot_userspace boot_secs unit state did=0
+    boot_userspace=$(systemd-analyze 2>/dev/null | sed -n 's/.*reached after \(.*\) in userspace.*/\1/p' | head -1)
+    boot_secs=$(systemd_time_secs "${boot_userspace:-}")
+    if ((boot_secs < 60)); then
+        printf 'skipping boot fix: userspace boot time is not slow (%ss)\n' "$boot_secs"
+        return
+    fi
+
+    unit="NetworkManager-wait-online.service"
+    if systemctl cat "$unit" >/dev/null 2>&1; then
+        state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
+        case "$state" in
+            enabled | enabled-runtime)
+                if ((DRY_RUN == 1)); then
+                    printf 'systemctl disable %s\n' "$unit"
+                else
+                    systemctl disable "$unit" >/dev/null 2>&1 || true
+                    printf 'disabled %s; network-online.target no longer blocks boot\n' "$unit"
+                fi
+                did=1
+                ;;
+            *)
+                printf 'skipping %s: already disabled (%s)\n' "$unit" "${state:-unknown}"
+                ;;
+        esac
+    else
+        printf 'skipping %s: not installed\n' "$unit"
+    fi
+
+    unit="plymouth-quit-wait.service"
+    if systemctl cat "$unit" >/dev/null 2>&1; then
+        state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
+        if [[ $state == "masked" ]]; then
+            printf 'skipping %s: already masked\n' "$unit"
+        else
+            if ((DRY_RUN == 1)); then
+                printf 'systemctl mask %s\n' "$unit"
+            else
+                systemctl mask "$unit" >/dev/null 2>&1 || true
+                printf 'masked %s; boot no longer waits for plymouth to quit\n' "$unit"
+            fi
+            did=1
+        fi
+    else
+        printf 'skipping %s: not installed\n' "$unit"
+    fi
+
+    if ((did == 0)); then
+        printf 'no delay-prone boot units needed changing\n'
     fi
 }
 
@@ -1131,8 +1242,9 @@ run_checks() {
 is_fix_id() {
     case "$1" in
         filesystem-btrfs-space | io-scheduler | junk-journald | junk-dnf | \
-            junk-coredumps | junk-flatpak | services-indexers | kernel-tuning | \
-            startup-fontcache | startup-iconcache | startup-flatpak | startup-ldconfig)
+            junk-coredumps | junk-flatpak | services-indexers | services-slowboot | \
+            kernel-tuning | startup-fontcache | startup-iconcache | startup-flatpak | \
+            startup-ldconfig)
             return 0
             ;;
     esac
@@ -1142,8 +1254,9 @@ is_fix_id() {
 all_fix_ids() {
     printf '%s\n' \
         filesystem-btrfs-space io-scheduler junk-journald junk-dnf \
-        junk-coredumps junk-flatpak services-indexers kernel-tuning \
-        startup-fontcache startup-iconcache startup-flatpak startup-ldconfig
+        junk-coredumps junk-flatpak services-indexers services-slowboot \
+        kernel-tuning startup-fontcache startup-iconcache startup-flatpak \
+        startup-ldconfig
 }
 
 run_fix() {
@@ -1165,6 +1278,7 @@ run_fix() {
         junk-coredumps) fix_junk_coredumps ;;
         junk-flatpak) fix_junk_flatpak ;;
         services-indexers) fix_services_indexers ;;
+        services-slowboot) fix_services_slowboot ;;
         kernel-tuning) fix_kernel_tuning ;;
         startup-fontcache) fix_startup_fontcache ;;
         startup-iconcache) fix_startup_iconcache ;;

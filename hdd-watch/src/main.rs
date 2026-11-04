@@ -6,6 +6,8 @@ mod prewarm;
 mod report;
 mod sampler;
 #[cfg(feature = "tui")]
+mod services;
+#[cfg(feature = "tui")]
 mod tui;
 
 use std::process::ExitCode;
@@ -22,7 +24,7 @@ Usage:
   hdd-watch apps                      Audit login autostart, user units and first-2-minute disk reads
   hdd-watch prewarm [--suggest]       Warm configured apps into the page cache
   hdd-watch tui [--demo] [--interval N]
-                                      Terminal dashboard (Tab/1-5 switch tabs, ? for help)
+                                      Terminal dashboard (Tab/1-6 switch tabs, ? for help)
 
 launch options:
   --cold          Drop the page cache first (root), then run cold, warm, warm

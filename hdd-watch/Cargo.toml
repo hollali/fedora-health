@@ -3,7 +3,7 @@ name = "hdd-watch"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
-description = "Sampler, startup benchmark and TUI for diagnosing slow Fedora systems on spinning disks"
+description = "Sampler, startup benchmark, systemd service manager and TUI for diagnosing slow Fedora systems on spinning disks"
 license = "MIT"
 
 [features]

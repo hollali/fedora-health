@@ -2,7 +2,7 @@
 
 Diagnose and fix a Fedora system that feels slow because of a spinning disk:
 I/O pressure sampling, startup benchmarking, a startup audit, safe system
-checks, and a terminal dashboard.
+checks, a systemd service manager, and a terminal dashboard.
 
 The tools are deliberately conservative:
 
@@ -78,11 +78,18 @@ Fix IDs:
 | `junk-coredumps` | Remove old coredumps after reporting the count |
 | `junk-flatpak` | Remove unused Flatpak runtimes |
 | `services-indexers` | Stop running tracker/baloo indexers for this session |
+| `services-slowboot` | On slow boots, disable `NetworkManager-wait-online` and mask `plymouth-quit-wait` |
 | `kernel-tuning` | Install the HDD sysctl profile |
 | `startup-fontcache` | Rebuild the font cache |
 | `startup-iconcache` | Rebuild icon/desktop caches |
 | `startup-flatpak` | Repair Flatpak state and stale refs |
 | `startup-ldconfig` | Refresh the shared-library cache |
+
+`services-slowboot` only acts when the last boot took at least 60 seconds in
+userspace. It disables `NetworkManager-wait-online.service` and masks
+`plymouth-quit-wait.service`, both of which commonly delay boot on slow disks.
+Re-enable them with `sudo systemctl enable NetworkManager-wait-online.service`
+and `sudo systemctl unmask plymouth-quit-wait.service`.
 
 Review the dry-run output before applying anything. In particular, a btrfs
 balance can take a long time and should be done on a backed-up, idle machine.
@@ -194,21 +201,24 @@ hdd-watch tui --demo          # fake data, no system changes
 hdd-watch tui --interval 5
 ```
 
-Tabs: **Live**, **History**, **Doctor**, **Disk**, **Launch**.
+Tabs: **Live**, **History**, **Doctor**, **Services**, **Disk**, **Launch**.
 
-- `Tab` / `Shift+Tab` or `1`..`5`: switch tabs
+- `Tab` / `Shift+Tab` or `1`..`6`: switch tabs
 - arrows or `hjkl`: move/scroll
 - `?`: help, `q`: quit
 - Live: `s` sort processes, space pause
 - History: `h`/`l` scroll, `+`/`-` zoom
 - Doctor: `r` re-check, `f` preview and confirm a fix, `a` fix all safe fixes
+- Services: `e` enable, `d` disable, `m` mask, `u` unmask, `r` reload. The list
+  is sorted by boot time and shows the unit-file and runtime state.
 - Disk: `r` reload
 - Launch: `/` filter apps, `Enter` warm benchmark, `c` cold benchmark, `p`
   add to prewarm.conf
 
-Fixes, benchmarks, cold cache drops and prewarm edits always show a
-confirmation popup first. Without root the TUI remains read-only and explains
-which actions are unavailable.
+Service changes take effect at the next boot and do not stop a running service.
+For static units, use mask/unmask. Fixes, service changes, benchmarks, cold
+cache drops and prewarm edits always show a confirmation popup first. Without
+root the TUI remains read-only and explains which actions are unavailable.
 
 ## Environment overrides
 

@@ -8,6 +8,7 @@ use crate::launch::{BenchResult, LaunchReport, Verdict};
 use crate::logfmt::{sanitize_name, LaunchRecord, LogSample, ProcKbps};
 use crate::report::Severity;
 use crate::sampler::{IoRates, LiveSample};
+use crate::services::ServiceInfo;
 
 use super::app::AppEvent;
 
@@ -157,9 +158,9 @@ pub fn fake_findings() -> Vec<Finding> {
         (
             "services-slowboot",
             Severity::Bad,
-            "Slow boot units",
-            "plocate-updatedb 10m 46s; fwupd 2m 57s.",
-            false,
+            "Slow boot",
+            "Total 2min 14.203s (2min 1.872s in userspace). Slowest units: plocate-updatedb 10m 46s; fwupd 2m 57s. Delay-prone units enabled: NetworkManager-wait-online.service.",
+            true,
         ),
         (
             "services-indexers",
@@ -270,6 +271,52 @@ pub fn startup_text() -> String {
         "This is fake demo data. Run the real audit with: hdd-watch apps",
     ]
     .join("\n")
+}
+
+pub fn fake_services() -> Vec<ServiceInfo> {
+    [
+        (
+            "plocate-updatedb.service",
+            "13min 10.223s",
+            790,
+            "enabled",
+            "active",
+        ),
+        (
+            "mariadb.service",
+            "1min 42.971s",
+            102,
+            "disabled",
+            "inactive",
+        ),
+        (
+            "plymouth-quit-wait.service",
+            "1min 38.097s",
+            98,
+            "static",
+            "active",
+        ),
+        ("abrtd.service", "1min 37.137s", 97, "enabled", "failed"),
+        ("docker.service", "1min 17.968s", 77, "enabled", "active"),
+        (
+            "NetworkManager-wait-online.service",
+            "6.104s",
+            6,
+            "disabled",
+            "inactive",
+        ),
+        ("sshd.service", "212ms", 0, "enabled", "active"),
+        ("cups.service", "88ms", 0, "disabled", "inactive"),
+    ]
+    .iter()
+    .map(|(unit, boot_time, boot_secs, state, active)| ServiceInfo {
+        unit: (*unit).to_string(),
+        boot_time: (*boot_time).to_string(),
+        boot_secs: *boot_secs,
+        state: (*state).to_string(),
+        active: (*active).to_string(),
+    })
+    .collect()
 }
 
 pub fn fake_apps() -> Vec<DesktopEntry> {

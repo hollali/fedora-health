@@ -5,6 +5,7 @@ mod doctor_tab;
 mod history_tab;
 mod launch_tab;
 mod live_tab;
+mod services_tab;
 mod themes;
 
 use std::io::{self, stdout};

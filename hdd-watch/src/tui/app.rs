@@ -12,21 +12,23 @@ use ratatui::Frame;
 
 use super::demo;
 use super::themes::{ACCENT, MUTED};
-use super::{disk_tab, doctor_tab, history_tab, launch_tab, live_tab};
+use super::{disk_tab, doctor_tab, history_tab, launch_tab, live_tab, services_tab};
 use crate::apps::{self, DesktopEntry};
 use crate::doctor::{self, DiskInfo, Finding};
 use crate::launch::{self, LaunchOptions, LaunchReport, Progress};
 use crate::logfmt::{self, LaunchRecord, LogSample};
 use crate::prewarm;
 use crate::sampler::{self, CpuSampler, IoAggregator, IoRates, LiveSample};
+use crate::services::{self, ServiceAction, ServiceInfo};
 
-pub const TAB_TITLES: [&str; 5] = ["Live", "History", "Doctor", "Disk", "Launch"];
+pub const TAB_TITLES: [&str; 6] = ["Live", "History", "Doctor", "Services", "Disk", "Launch"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
     Live,
     History,
     Doctor,
+    Services,
     Disk,
     Launch,
 }
@@ -37,17 +39,19 @@ impl Tab {
             Self::Live => 0,
             Self::History => 1,
             Self::Doctor => 2,
-            Self::Disk => 3,
-            Self::Launch => 4,
+            Self::Services => 3,
+            Self::Disk => 4,
+            Self::Launch => 5,
         }
     }
 
     pub fn from_index(index: usize) -> Self {
-        match index % 5 {
+        match index % 6 {
             0 => Self::Live,
             1 => Self::History,
             2 => Self::Doctor,
-            3 => Self::Disk,
+            3 => Self::Services,
+            4 => Self::Disk,
             _ => Self::Launch,
         }
     }
@@ -57,7 +61,7 @@ impl Tab {
     }
 
     pub fn previous(self) -> Self {
-        Self::from_index(self.index() + 4)
+        Self::from_index(self.index() + 5)
     }
 }
 
@@ -92,6 +96,8 @@ pub enum AppEvent {
     DoctorError(String),
     AppsLoaded(String),
     DiskLoaded(DiskInfo),
+    ServicesLoaded(Result<Vec<ServiceInfo>, String>),
+    ServiceActionDone(Result<String, String>),
     FixPreview {
         id: String,
         result: Result<String, String>,
@@ -111,6 +117,10 @@ pub enum ConfirmAction {
     },
     Prewarm {
         app_index: usize,
+    },
+    Service {
+        unit: String,
+        action: ServiceAction,
     },
     FixAll,
 }
@@ -165,6 +175,10 @@ pub struct App {
     pub launch_running: bool,
     pub disk: DiskInfo,
     pub disk_loading: bool,
+    pub services: Vec<ServiceInfo>,
+    pub service_selected: usize,
+    pub services_loading: bool,
+    pub services_error: Option<String>,
     pub popup: Option<Popup>,
     pub status: String,
     pub history_offset: usize,
@@ -174,25 +188,28 @@ pub struct App {
 impl App {
     pub fn new(demo_mode: bool, interval: u64) -> Self {
         let now = logfmt::now_epoch();
-        let (history, doctor, apps_list, launch_history, disk, startup_text) = if demo_mode {
-            (
-                demo::seed_history(now),
-                demo::fake_findings(),
-                demo::fake_apps(),
-                demo::fake_launch_history(now),
-                demo::fake_disk(),
-                demo::startup_text(),
-            )
-        } else {
-            (
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                DiskInfo::default(),
-                String::new(),
-            )
-        };
+        let (history, doctor, apps_list, launch_history, disk, startup_text, services) =
+            if demo_mode {
+                (
+                    demo::seed_history(now),
+                    demo::fake_findings(),
+                    demo::fake_apps(),
+                    demo::fake_launch_history(now),
+                    demo::fake_disk(),
+                    demo::startup_text(),
+                    demo::fake_services(),
+                )
+            } else {
+                (
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    DiskInfo::default(),
+                    String::new(),
+                    Vec::new(),
+                )
+            };
         let live: VecDeque<LogSample> = history
             .iter()
             .filter(|sample| sample.ts.saturating_add(600) >= now)
@@ -229,6 +246,10 @@ impl App {
             launch_running: false,
             disk,
             disk_loading: !demo_mode,
+            services,
+            service_selected: 0,
+            services_loading: false,
+            services_error: None,
             popup: None,
             status: if demo_mode {
                 "DEMO: fake data; nothing is fixed, launched or written".to_string()
@@ -324,6 +345,21 @@ impl App {
         });
     }
 
+    pub fn refresh_services(&mut self, tx: Sender<AppEvent>) {
+        if self.demo {
+            self.services = demo::fake_services();
+            self.services_loading = false;
+            self.services_error = None;
+            return;
+        }
+        self.services_loading = true;
+        self.services_error = None;
+        thread::spawn(move || {
+            let result = services::collect_services();
+            let _ = tx.send(AppEvent::ServicesLoaded(result));
+        });
+    }
+
     pub fn on_event(&mut self, event: AppEvent) {
         match event {
             AppEvent::Sample(sample) => {
@@ -349,6 +385,33 @@ impl App {
                 self.disk = disk;
                 self.disk_loading = false;
             }
+            AppEvent::ServicesLoaded(result) => {
+                self.services_loading = false;
+                match result {
+                    Ok(list) => {
+                        self.services = list;
+                        self.services_error = None;
+                        if self.service_selected >= self.services.len() {
+                            self.service_selected = self.services.len().saturating_sub(1);
+                        }
+                    }
+                    Err(err) => {
+                        self.services_error = Some(err);
+                    }
+                }
+            }
+            AppEvent::ServiceActionDone(result) => match result {
+                Ok(message) => {
+                    self.status = message.lines().next().unwrap_or("done").to_string();
+                }
+                Err(err) => {
+                    self.status = "service action failed".to_string();
+                    self.popup = Some(Popup::Error {
+                        title: "Service action failed".into(),
+                        body: err,
+                    });
+                }
+            },
             AppEvent::FixPreview { id, result } => {
                 self.preview_loading = false;
                 match result {
@@ -603,10 +666,15 @@ impl App {
                 return;
             }
             KeyCode::Char('4') => {
-                self.tab = Tab::Disk;
+                self.tab = Tab::Services;
+                self.on_tab_change(tx);
                 return;
             }
             KeyCode::Char('5') => {
+                self.tab = Tab::Disk;
+                return;
+            }
+            KeyCode::Char('6') => {
                 self.tab = Tab::Launch;
                 return;
             }
@@ -666,6 +734,26 @@ impl App {
                     self.request_fix_all(tx);
                 }
             }
+            Tab::Services => {
+                if up {
+                    self.service_selected = self.service_selected.saturating_sub(1);
+                } else if down {
+                    if self.service_selected + 1 < self.services.len() {
+                        self.service_selected += 1;
+                    }
+                } else if key.code == KeyCode::Char('r') {
+                    self.status = "reloading services...".to_string();
+                    self.refresh_services(tx.clone());
+                } else if key.code == KeyCode::Char('e') {
+                    self.request_service_action(ServiceAction::Enable);
+                } else if key.code == KeyCode::Char('d') {
+                    self.request_service_action(ServiceAction::Disable);
+                } else if key.code == KeyCode::Char('m') {
+                    self.request_service_action(ServiceAction::Mask);
+                } else if key.code == KeyCode::Char('u') {
+                    self.request_service_action(ServiceAction::Unmask);
+                }
+            }
             Tab::Disk => {
                 if key.code == KeyCode::Char('r') {
                     self.status = "reloading disk information...".to_string();
@@ -700,6 +788,10 @@ impl App {
         if self.tab == Tab::Doctor {
             self.status = "re-running doctor checks...".to_string();
             self.refresh_doctor(tx.clone());
+        }
+        if self.tab == Tab::Services {
+            self.status = "loading system services...".to_string();
+            self.refresh_services(tx.clone());
         }
     }
 
@@ -792,6 +884,9 @@ impl App {
                         }
                         ConfirmAction::Prewarm { app_index } => {
                             self.add_prewarm(app_index);
+                        }
+                        ConfirmAction::Service { unit, action } => {
+                            self.start_service_action(unit, action, tx);
                         }
                         ConfirmAction::FixAll => {
                             self.start_fix_all(tx);
@@ -931,6 +1026,76 @@ impl App {
         }
     }
 
+    fn request_service_action(&mut self, action: ServiceAction) {
+        let Some(service) = self.services.get(self.service_selected) else {
+            self.status = "no service selected".to_string();
+            return;
+        };
+        if !self.demo && !logfmt::is_root() {
+            self.popup = Some(Popup::Error {
+                title: "Root required".into(),
+                body: "Enabling, disabling, masking and unmasking services requires root.\nRun hdd-watch with sudo.".into(),
+            });
+            return;
+        }
+        let unit = service.unit.clone();
+        let state = service.state.clone();
+        let active = if service.active.is_empty() {
+            "unknown".to_string()
+        } else {
+            service.active.clone()
+        };
+        let mut body = format!(
+            "This runs:\n\nsudo systemctl {} {}\n\nThe service will be {}.\n\nCurrent unit-file state: {state}\nRuntime state: {active}",
+            action.verb(),
+            unit,
+            action.effect()
+        );
+        if matches!(action, ServiceAction::Enable | ServiceAction::Disable) && state == "static" {
+            body.push_str(
+                "\n\nThis unit is static, so systemctl may refuse to enable or disable it. Use mask/unmask instead if needed.",
+            );
+        }
+        body.push_str("\n\nPress y to run, n or Esc to cancel.");
+        self.popup = Some(Popup::Confirm {
+            title: format!("{} {}?", action.verb(), unit),
+            body,
+            action: ConfirmAction::Service { unit, action },
+        });
+    }
+
+    fn start_service_action(&mut self, unit: String, action: ServiceAction, tx: &Sender<AppEvent>) {
+        if !self.demo && !logfmt::is_root() {
+            self.popup = Some(Popup::Error {
+                title: "Root required".into(),
+                body: "Service changes require root.".into(),
+            });
+            return;
+        }
+        self.popup = None;
+        if self.demo {
+            let state = match action {
+                ServiceAction::Enable => "enabled",
+                ServiceAction::Disable => "disabled",
+                ServiceAction::Mask => "masked",
+                ServiceAction::Unmask => "disabled",
+            };
+            if let Some(service) = self.services.iter_mut().find(|item| item.unit == unit) {
+                service.state = state.to_string();
+            }
+            self.status = format!("DEMO: would run systemctl {} {}", action.verb(), unit);
+            return;
+        }
+        self.status = format!("running systemctl {} {}...", action.verb(), unit);
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let result = services::apply_action(&unit, action);
+            let _ = tx.send(AppEvent::ServiceActionDone(result));
+            let refresh = services::collect_services();
+            let _ = tx.send(AppEvent::ServicesLoaded(refresh));
+        });
+    }
+
     fn request_fix(&mut self, tx: &Sender<AppEvent>) {
         let Some(finding) = self.doctor.get(self.doctor_selected) else {
             return;
@@ -984,10 +1149,7 @@ impl App {
         if self.demo {
             self.popup = Some(Popup::Confirm {
                 title: "Fix all safe fixes?".into(),
-                body: format!(
-                    "DEMO: would run all safe fixes: {}",
-                    fixable.join(", ")
-                ),
+                body: format!("DEMO: would run all safe fixes: {}", fixable.join(", ")),
                 action: ConfirmAction::FixAll,
             });
             return;
@@ -1116,11 +1278,12 @@ impl App {
             Tab::Live => live_tab::render(frame, chunks[1], self),
             Tab::History => history_tab::render(frame, chunks[1], self),
             Tab::Doctor => doctor_tab::render(frame, chunks[1], self),
+            Tab::Services => services_tab::render(frame, chunks[1], self),
             Tab::Disk => disk_tab::render(frame, chunks[1], self),
             Tab::Launch => launch_tab::render(frame, chunks[1], self),
         }
 
-        let hint = "Tab/1-5 switch  arrows/hjkl move  ? help  q quit";
+        let hint = "Tab/1-6 switch  arrows/hjkl move  ? help  q quit";
         let footer = Paragraph::new(vec![
             Line::from(Span::styled(
                 if self.status.is_empty() {
@@ -1197,6 +1360,36 @@ impl App {
             }
         )
     }
+
+    pub fn service_detail(&self) -> String {
+        if let Some(error) = &self.services_error {
+            return format!("Cannot read system services:\n\n{error}");
+        }
+        if self.services_loading && self.services.is_empty() {
+            return "Loading systemd services...".to_string();
+        }
+        let Some(service) = self.services.get(self.service_selected) else {
+            return "No services found.".to_string();
+        };
+        format!(
+            "{}\n\nboot time: {}\nunit-file state: {}\nruntime state: {}\n\n\
+             e enable at next boot\nd disable at next boot\nm mask\nu unmask\nr reload\n\n\
+             Changes run sudo systemctl and take effect at the next boot. Running services are not stopped.\n\
+             Use mask for static units that cannot be enabled or disabled.",
+            service.unit,
+            if service.boot_time.is_empty() {
+                "-"
+            } else {
+                &service.boot_time
+            },
+            service.state,
+            if service.active.is_empty() {
+                "unknown"
+            } else {
+                &service.active
+            }
+        )
+    }
 }
 
 pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
@@ -1220,7 +1413,7 @@ fn help_text() -> String {
         "",
         "Global",
         "  Tab / Shift+Tab      next / previous tab",
-        "  1..5                 jump to Live, History, Doctor, Disk, Launch",
+        "  1..6                 jump to Live, History, Doctor, Services, Disk, Launch",
         "  q, Ctrl+C            quit",
         "  ?                    toggle this help",
         "  arrows or hjkl       move / scroll",
@@ -1238,6 +1431,14 @@ fn help_text() -> String {
         "  f                    preview and confirm a fix",
         "  a                    fix all safe fixes (confirmation)",
         "  r                    re-run checks and startup audit",
+        "",
+        "Services",
+        "  up/down or k/j       select system service",
+        "  e                    enable at next boot (confirmation)",
+        "  d                    disable at next boot (confirmation)",
+        "  m                    mask (prevent starting; confirmation)",
+        "  u                    unmask (confirmation)",
+        "  r                    reload the service list",
         "",
         "Disk",
         "  r                    reload SMART/filesystem data",

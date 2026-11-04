@@ -68,3 +68,21 @@ fn fix_dry_run_requires_no_root_and_changes_nothing() {
         "dry-run should describe the scheduler action:\n{stdout}"
     );
 }
+
+#[test]
+fn slowboot_fix_dry_run_is_known_and_changes_nothing() {
+    let script = doctor_script();
+    let output = Command::new("bash")
+        .arg(&script)
+        .args(["--fix-id", "services-slowboot", "--dry-run"])
+        .env("LC_ALL", "C")
+        .output()
+        .expect("run slowboot dry-run");
+    assert!(
+        output.status.success(),
+        "slowboot dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.trim().is_empty(), "dry-run produced no output");
+}
