@@ -28,109 +28,113 @@ DOCTOR = doctor_path()
 class FedoraHealthWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Fedora Health")
-        self.set_default_size(920, 640)
+        self.set_default_size(980, 700)
 
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
         toolbar.add_top_bar(header)
 
-        notebook = Gtk.Notebook()
-        toolbar.set_content(notebook)
+        self.stack = Adw.ViewStack()
+        switcher = Adw.ViewSwitcher()
+        switcher.set_stack(self.stack)
+        header.set_title_widget(switcher)
 
-        # Overview
-        overview = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        overview.set_margin_top(16)
-        overview.set_margin_bottom(16)
-        overview.set_margin_start(16)
-        overview.set_margin_end(16)
-        self.boot_label = Gtk.Label(label="Boot time: unknown")
-        self.boot_label.set_wrap(True)
-        overview.append(self.boot_label)
-        btn_check = Gtk.Button(label="Check system now")
+        # ---------- Overview ----------
+        overview_page = Adw.PreferencesPage()
+        boot_group = Adw.PreferencesGroup(title="Startup")
+        self.boot_row = Adw.ActionRow(title="Boot time", subtitle="Unknown")
+        boot_group.add(self.boot_row)
+        overview_page.add(boot_group)
+
+        diag_action_group = Adw.PreferencesGroup(title="Diagnosis")
+        check_row = Adw.ActionRow(title="Check system", subtitle="Run all health checks")
+        btn_check = Gtk.Button(label="Check now")
+        btn_check.add_css_class("suggested-action")
         btn_check.connect("clicked", lambda *_: self.run_diagnosis())
-        overview.append(btn_check)
-        self.status_label = Gtk.Label(label="Ready.")
-        self.status_label.set_wrap(True)
-        overview.append(self.status_label)
-        notebook.append_page(overview, Gtk.Label(label="Overview"))
+        check_row.add_suffix(btn_check)
+        diag_action_group.add(check_row)
+        self.status_row = Adw.ActionRow(title="Status", subtitle="Ready")
+        diag_action_group.add(self.status_row)
+        overview_page.add(diag_action_group)
+        self.stack.add_titled(overview_page, "overview", "Overview")
 
-        # Diagnosis
-        diag_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        diag_box.set_margin_top(8)
-        diag_box.set_margin_bottom(8)
-        diag_box.set_margin_start(8)
-        diag_box.set_margin_end(8)
-        self.diag_list = Gtk.ListBox()
-        self.diag_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_child(self.diag_list)
-        scroll.set_vexpand(True)
-        diag_box.append(scroll)
-        notebook.append_page(diag_box, Gtk.Label(label="Diagnosis"))
+        # ---------- Diagnosis ----------
+        diagnosis_page = Adw.PreferencesPage()
+        self.diag_group = Adw.PreferencesGroup(title="Findings")
+        diagnosis_page.add(self.diag_group)
+        self.stack.add_titled(diagnosis_page, "diagnosis", "Diagnosis")
 
-        # Startup
-        startup = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        startup.set_margin_top(16)
-        startup.set_margin_bottom(16)
-        startup.set_margin_start(16)
-        startup.set_margin_end(16)
-        self.startup_label = Gtk.Label(label="Make startup faster by moving slow services out of boot.")
-        self.startup_label.set_wrap(True)
-        startup.append(self.startup_label)
-        btn_speed = Gtk.Button(label="Speed up startup (safe)")
+        # ---------- Startup ----------
+        startup_page = Adw.PreferencesPage()
+        startup_group = Adw.PreferencesGroup(title="Speed up startup")
+        speed_row = Adw.ActionRow(title="Move slow services out of boot",
+                                 subtitle="Defers heavy services and socket-activates Docker/MariaDB")
+        btn_speed = Gtk.Button(label="Apply")
+        btn_speed.add_css_class("suggested-action")
         btn_speed.connect("clicked", lambda *_: self.run_fix("services-slowboot"))
-        startup.append(btn_speed)
-        btn_io = Gtk.Button(label="Use better disk settings")
+        speed_row.add_suffix(btn_speed)
+        startup_group.add(speed_row)
+
+        io_row = Adw.ActionRow(title="Disk settings",
+                              subtitle="Use BFQ scheduler on rotational disks")
+        btn_io = Gtk.Button(label="Apply")
         btn_io.connect("clicked", lambda *_: self.run_fix("io-scheduler"))
-        startup.append(btn_io)
-        notebook.append_page(startup, Gtk.Label(label="Startup"))
+        io_row.add_suffix(btn_io)
+        startup_group.add(io_row)
+        startup_page.add(startup_group)
+        self.stack.add_titled(startup_page, "startup", "Startup")
 
-        # Services
-        services = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        services.set_margin_top(8)
-        services.set_margin_bottom(8)
-        services.set_margin_start(8)
-        services.set_margin_end(8)
-        btn_refresh_services = Gtk.Button(label="Refresh services")
-        btn_refresh_services.connect("clicked", lambda *_: self.load_services())
-        services.append(btn_refresh_services)
-        self.services_list = Gtk.ListBox()
-        self.services_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        scroll_services = Gtk.ScrolledWindow()
-        scroll_services.set_child(self.services_list)
-        scroll_services.set_vexpand(True)
-        services.append(scroll_services)
-        notebook.append_page(services, Gtk.Label(label="Services"))
+        # ---------- Services ----------
+        services_page = Adw.PreferencesPage()
+        services_top = Adw.PreferencesGroup(title="Boot services")
+        refresh_row = Adw.ActionRow(title="Refresh list", subtitle="Top services by boot time")
+        btn_refresh = Gtk.Button(label="Refresh")
+        btn_refresh.connect("clicked", lambda *_: self.load_services())
+        refresh_row.add_suffix(btn_refresh)
+        services_top.add(refresh_row)
+        services_page.add(services_top)
+        self.services_group = Adw.PreferencesGroup(title="Services")
+        services_page.add(self.services_group)
+        self.stack.add_titled(services_page, "services", "Services")
 
-        # Actions
-        actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        actions.set_margin_top(16)
-        actions.set_margin_bottom(16)
-        actions.set_margin_start(16)
-        actions.set_margin_end(16)
-        btn_fixall = Gtk.Button(label="Fix all safe issues")
+        # ---------- Actions ----------
+        actions_page = Adw.PreferencesPage()
+        fixes_group = Adw.PreferencesGroup(title="Maintenance")
+        fixall_row = Adw.ActionRow(title="Fix all safe issues", subtitle="Runs every applicable safe fix")
+        btn_fixall = Gtk.Button(label="Fix all")
+        btn_fixall.add_css_class("suggested-action")
         btn_fixall.connect("clicked", lambda *_: self.run_fix(None))
-        actions.append(btn_fixall)
-        btn_reboot = Gtk.Button(label="Restart computer")
-        btn_reboot.connect("clicked", lambda *_: self.reboot())
-        actions.append(btn_reboot)
-        notebook.append_page(actions, Gtk.Label(label="Actions"))
+        fixall_row.add_suffix(btn_fixall)
+        fixes_group.add(fixall_row)
 
+        reboot_row = Adw.ActionRow(title="Restart computer", subtitle="Reboot to apply boot changes")
+        btn_reboot = Gtk.Button(label="Restart")
+        btn_reboot.add_css_class("destructive-action")
+        btn_reboot.connect("clicked", lambda *_: self.reboot())
+        reboot_row.add_suffix(btn_reboot)
+        fixes_group.add(reboot_row)
+        actions_page.add(fixes_group)
+        self.stack.add_titled(actions_page, "actions", "Actions")
+
+        toolbar.set_content(self.stack)
         self.set_content(toolbar)
 
         self.findings = []
+        self.diag_rows = []
+        self.service_rows = []
         GLib.idle_add(self.refresh_boot)
         GLib.idle_add(self.load_services)
 
     def set_status(self, text):
-        self.status_label.set_label(text)
+        self.status_row.set_subtitle(text)
 
     def refresh_boot(self):
         try:
             out = subprocess.run(["systemd-analyze"], capture_output=True, text=True, timeout=10)
-            self.boot_label.set_label(out.stdout.strip() or "Boot time: unknown")
+            text = out.stdout.strip() or "Unknown"
+            self.boot_row.set_subtitle(text)
         except Exception as e:
-            self.boot_label.set_label(f"Boot time: {e}")
+            self.boot_row.set_subtitle(str(e))
         return False
 
     def run_diagnosis(self):
@@ -146,44 +150,34 @@ class FedoraHealthWindow(Adw.ApplicationWindow):
             GLib.idle_add(self.set_status, f"Diagnosis failed: {e}")
 
     def _show_findings(self, data):
-        # clear
-        while True:
-            row = self.diag_list.get_row_at_index(0)
-            if row is None:
-                break
-            self.diag_list.remove(row)
+        for row in self.diag_rows:
+            self.diag_group.remove(row)
+        self.diag_rows = []
         for item in data:
-            row = self._make_row(item)
-            self.diag_list.append(row)
+            row = self._make_finding_row(item)
+            self.diag_group.add(row)
+            self.diag_rows.append(row)
         self.set_status(f"Found {len(data)} items.")
         return False
 
-    def _make_row(self, item):
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        box.set_margin_top(6)
-        box.set_margin_bottom(6)
-        box.set_margin_start(6)
-        box.set_margin_end(6)
+    def _severity_dot(self, sev):
+        lbl = Gtk.Label(label="●")
+        css = {"ok": "success", "warn": "warning", "bad": "error"}.get(sev, "")
+        if css:
+            lbl.add_css_class(css)
+        return lbl
 
+    def _make_finding_row(self, item):
         sev = item.get("severity", "ok")
-        color = {"ok": "green", "warn": "orange", "bad": "red"}.get(sev, "gray")
-        lbl = Gtk.Label()
-        lbl.set_markup(f"<span foreground='{color}'><b>[{sev.upper()}]</b></span> {GLib.markup_escape_text(item.get('title',''))}")
-        lbl.set_halign(Gtk.Align.START)
-        lbl.set_wrap(True)
-        lbl.set_hexpand(True)
-        box.append(lbl)
-
+        row = Adw.ActionRow(title=item.get("title", ""),
+                            subtitle=item.get("detail", ""))
+        row.add_prefix(self._severity_dot(sev))
         fid = item.get("id")
         if item.get("fix") == 1 and fid:
             btn = Gtk.Button(label="Fix")
+            btn.add_css_class("suggested-action")
             btn.connect("clicked", lambda *_: self.run_fix(fid))
-            box.append(btn)
-
-        row = Gtk.ListBoxRow()
-        row.set_child(box)
-        # store detail as tooltip
-        row.set_tooltip_text(item.get("detail", ""))
+            row.add_suffix(btn)
         return row
 
     def run_fix(self, fid):
@@ -193,7 +187,7 @@ class FedoraHealthWindow(Adw.ApplicationWindow):
                     cmd = ["pkexec", DOCTOR, "--fix"]
                 else:
                     cmd = ["pkexec", DOCTOR, "--fix-id", fid]
-                self.set_status("Applying fix… (you may be asked for your password)")
+                self.set_status("Applying fix… (password may be required)")
                 subprocess.run(cmd, check=False, timeout=300)
                 GLib.idle_add(self.set_status, "Fix finished. Re-checking…")
                 GLib.idle_add(self.run_diagnosis)
@@ -205,62 +199,51 @@ class FedoraHealthWindow(Adw.ApplicationWindow):
         def worker():
             try:
                 out = subprocess.run(["systemd-analyze", "blame"], capture_output=True, text=True, timeout=60)
-                lines = [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
                 items = []
-                for ln in lines[:25]:
-                    parts = ln.split()
-                    if not parts:
+                for ln in out.stdout.splitlines():
+                    ln = ln.strip()
+                    if not ln:
                         continue
+                    parts = ln.split()
                     unit = parts[-1]
                     if not unit.endswith(".service"):
                         continue
                     items.append((ln, unit))
+                    if len(items) >= 25:
+                        break
                 GLib.idle_add(self._show_services, items)
             except Exception as e:
                 GLib.idle_add(self.set_status, f"Services load failed: {e}")
         threading.Thread(target=worker, daemon=True).start()
 
     def _show_services(self, items):
-        while True:
-            row = self.services_list.get_row_at_index(0)
-            if row is None:
-                break
-            self.services_list.remove(row)
+        for row in self.service_rows:
+            self.services_group.remove(row)
+        self.service_rows = []
         for text, unit in items:
-            self.services_list.append(self._make_service_row(text, unit))
+            row = self._make_service_row(text, unit)
+            self.services_group.add(row)
+            self.service_rows.append(row)
         return False
 
     def _make_service_row(self, text, unit):
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        box.set_margin_top(4)
-        box.set_margin_bottom(4)
-        box.set_margin_start(4)
-        box.set_margin_end(4)
-        lbl = Gtk.Label(label=text)
-        lbl.set_halign(Gtk.Align.START)
-        lbl.set_hexpand(True)
-        box.append(lbl)
-
+        row = Adw.ActionRow(title=unit, subtitle=text)
         state = subprocess.run(["systemctl", "is-enabled", unit], capture_output=True, text=True).stdout.strip()
         if state in ("enabled", "enabled-runtime"):
-            b = Gtk.Button(label="Disable")
-            b.connect("clicked", lambda *_, u=unit: self.manage_service(u, "disable"))
-            box.append(b)
+            btn = Gtk.Button(label="Disable")
+            btn.connect("clicked", lambda *_, u=unit: self.manage_service(u, "disable"))
         else:
-            b = Gtk.Button(label="Enable")
-            b.connect("clicked", lambda *_, u=unit: self.manage_service(u, "enable"))
-            box.append(b)
+            btn = Gtk.Button(label="Enable")
+            btn.connect("clicked", lambda *_, u=unit: self.manage_service(u, "enable"))
+        row.add_suffix(btn)
 
         if state == "masked":
-            b2 = Gtk.Button(label="Unmask")
-            b2.connect("clicked", lambda *_, u=unit: self.manage_service(u, "unmask"))
+            btn2 = Gtk.Button(label="Unmask")
+            btn2.connect("clicked", lambda *_, u=unit: self.manage_service(u, "unmask"))
         else:
-            b2 = Gtk.Button(label="Mask")
-            b2.connect("clicked", lambda *_, u=unit: self.manage_service(u, "mask"))
-        box.append(b2)
-
-        row = Gtk.ListBoxRow()
-        row.set_child(box)
+            btn2 = Gtk.Button(label="Mask")
+            btn2.connect("clicked", lambda *_, u=unit: self.manage_service(u, "mask"))
+        row.add_suffix(btn2)
         return row
 
     def manage_service(self, unit, action):
