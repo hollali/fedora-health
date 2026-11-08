@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 - Initial release
 - UX improvements: intuitive diagnostic IDs, no stderr noise, Doctor tab fix-all and auto re-check, tab entry refresh
+- fedora-health-gui.py: GTK4/libadwaita GUI with diagnosis, services management, and one-click fixes via polkit
   - fedora-doctor.sh: diagnose and safely fix common causes of slow Fedora systems
   - fedora-doctor.sh: report total boot time and offer a safe slow-boot fix (`services-slowboot`)
   - fedora-doctor.sh: the slow-boot fix now acts on the measured `systemd-analyze blame` bottlenecks: socket-activates Docker/MariaDB, defers PostgreSQL/PHP-FPM/ABRT by timer, and stops fwupd from blocking GDM

@@ -27,11 +27,12 @@ if [[ ! -x "$BIN" ]]; then
     exit 1
 fi
 
-install -d -m 0755 "$SBIN" "$UNIT_DIR" "$CONF_DIR" "$PREFIX/share/doc/hdd-watch"
+install -d -m 0755 "$SBIN" "$UNIT_DIR" "$CONF_DIR" "$PREFIX/share/doc/hdd-watch" "$PREFIX/share/applications"
 install -d -m 0755 /var/lib/hdd-watch
 
 install -m 0755 "$BIN" "$SBIN/hdd-watch"
 install -m 0755 "$ROOT/fedora-doctor.sh" "$SBIN/fedora-doctor.sh"
+install -m 0755 "$ROOT/fedora-health-gui.py" "$SBIN/fedora-health-gui"
 install -m 0644 "$ROOT/hdd-watch.service" "$UNIT_DIR/hdd-watch.service"
 install -m 0644 "$ROOT/hdd-watch-prewarm.service" "$UNIT_DIR/hdd-watch-prewarm.service"
 install -m 0644 "$ROOT/README.md" "$PREFIX/share/doc/hdd-watch/README.md"
@@ -40,12 +41,15 @@ if [[ ! -e "$CONF_DIR/prewarm.conf" ]]; then
     install -m 0644 "$ROOT/prewarm.conf.example" "$CONF_DIR/prewarm.conf"
 fi
 
+install -m 0644 "$ROOT/fedora-health.desktop" "$PREFIX/share/applications/fedora-health.desktop"
 systemctl daemon-reload
 
 cat <<EOF
 Installed:
   $SBIN/hdd-watch
   $SBIN/fedora-doctor.sh
+  $SBIN/fedora-health-gui
+  $PREFIX/share/applications/fedora-health.desktop
   $UNIT_DIR/hdd-watch.service
   $UNIT_DIR/hdd-watch-prewarm.service
   $CONF_DIR/prewarm.conf

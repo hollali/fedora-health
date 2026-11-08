@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Fedora Health
+Comment=Diagnose and fix a slow Fedora system
+Exec=fedora-health-gui
+Terminal=false
+Categories=System;Utility;
+Icon=utilities-system-monitor

@@ -239,6 +239,18 @@ For static units, use mask/unmask. Fixes, service changes, benchmarks, cold
 cache drops and prewarm edits always show a confirmation popup first. Without
 root the TUI remains read-only and explains which actions are unavailable.
 
+## GUI (non-technical users)
+
+A simple graphical interface is included:
+
+```bash
+python3 fedora-health-gui.py
+```
+
+Or install it system-wide with `sudo ./install.sh`, which adds a
+`Fedora Health` application-menu entry. The GUI runs read-only checks as
+your normal user and uses polkit to apply fixes.
+
 ## Environment overrides
 
 Useful for tests and per-user runs:
