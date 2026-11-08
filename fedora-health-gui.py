@@ -49,8 +49,10 @@ class FedoraHealthWindow(Adw.ApplicationWindow):
         diag_action_group = Adw.PreferencesGroup(title="Diagnosis")
         check_row = Adw.ActionRow(title="Check system", subtitle="Run all health checks")
         btn_check = Gtk.Button(label="Check now")
+        btn_check.set_use_underline("_Check now")
         btn_check.add_css_class("suggested-action")
         btn_check.connect("clicked", lambda *_: self.run_diagnosis())
+        btn_check.set_tooltip_text("Run a full system health check")
         check_row.add_suffix(btn_check)
         diag_action_group.add(check_row)
         self.status_row = Adw.ActionRow(title="Status", subtitle="Ready")
@@ -70,15 +72,19 @@ class FedoraHealthWindow(Adw.ApplicationWindow):
         speed_row = Adw.ActionRow(title="Move slow services out of boot",
                                  subtitle="Defers heavy services and socket-activates Docker/MariaDB")
         btn_speed = Gtk.Button(label="Apply")
+        btn_speed.set_use_underline("_Apply")
         btn_speed.add_css_class("suggested-action")
         btn_speed.connect("clicked", lambda *_: self.run_fix("services-slowboot"))
+        btn_speed.set_tooltip_text("Apply changes to move slow services out of boot")
         speed_row.add_suffix(btn_speed)
         startup_group.add(speed_row)
 
         io_row = Adw.ActionRow(title="Disk settings",
-                              subtitle="Use BFQ scheduler on rotational disks")
+                               subtitle="Use BFQ scheduler on rotational disks")
         btn_io = Gtk.Button(label="Apply")
+        btn_io.set_use_underline("_Apply")
         btn_io.connect("clicked", lambda *_: self.run_fix("io-scheduler"))
+        btn_io.set_tooltip_text("Apply disk I/O scheduler settings")
         io_row.add_suffix(btn_io)
         startup_group.add(io_row)
         startup_page.add(startup_group)
@@ -102,15 +108,19 @@ class FedoraHealthWindow(Adw.ApplicationWindow):
         fixes_group = Adw.PreferencesGroup(title="Maintenance")
         fixall_row = Adw.ActionRow(title="Fix all safe issues", subtitle="Runs every applicable safe fix")
         btn_fixall = Gtk.Button(label="Fix all")
+        btn_fixall.set_use_underline("_Fix all")
         btn_fixall.add_css_class("suggested-action")
         btn_fixall.connect("clicked", lambda *_: self.run_fix(None))
+        btn_fixall.set_tooltip_text("Apply all safe fixes")
         fixall_row.add_suffix(btn_fixall)
         fixes_group.add(fixall_row)
 
         reboot_row = Adw.ActionRow(title="Restart computer", subtitle="Reboot to apply boot changes")
         btn_reboot = Gtk.Button(label="Restart")
+        btn_reboot.set_use_underline("_Restart")
         btn_reboot.add_css_class("destructive-action")
         btn_reboot.connect("clicked", lambda *_: self.reboot())
+        btn_reboot.set_tooltip_text("Restart your computer to apply boot changes")
         reboot_row.add_suffix(btn_reboot)
         fixes_group.add(reboot_row)
         actions_page.add(fixes_group)
@@ -169,8 +179,10 @@ class FedoraHealthWindow(Adw.ApplicationWindow):
 
     def _make_finding_row(self, item):
         sev = item.get("severity", "ok")
-        row = Adw.ActionRow(title=item.get("title", ""),
-                            subtitle=item.get("detail", ""))
+        title = item.get("title", "")
+        detail = item.get("detail", "")
+        row = Adw.ActionRow(title=title, subtitle=detail)
+        row.set_accessible_role(Gtk.AccessibleRole.LIST_ITEM)
         row.add_prefix(self._severity_dot(sev))
         fid = item.get("id")
         if item.get("fix") == 1 and fid:
@@ -228,6 +240,7 @@ class FedoraHealthWindow(Adw.ApplicationWindow):
 
     def _make_service_row(self, text, unit):
         row = Adw.ActionRow(title=unit, subtitle=text)
+        row.set_accessible_role(Gtk.AccessibleRole.LIST_ITEM)
         state = subprocess.run(["systemctl", "is-enabled", unit], capture_output=True, text=True).stdout.strip()
         if state in ("enabled", "enabled-runtime"):
             btn = Gtk.Button(label="Disable")
