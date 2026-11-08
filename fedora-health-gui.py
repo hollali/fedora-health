@@ -8,7 +8,7 @@ import threading
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, GLib, Gtk, Gdk
 
 
 def doctor_path():
@@ -25,10 +25,38 @@ def doctor_path():
 DOCTOR = doctor_path()
 
 
+_css_loaded = False
+
+
+def _ensure_css():
+    global _css_loaded
+    if _css_loaded:
+        return
+    try:
+        from gi.repository import GtkCssProvider
+    except ImportError:
+        _css_loaded = True
+        return
+    css_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "styles.css")
+    if os.path.exists(css_path):
+        provider = GtkCssProvider()
+        try:
+            provider.load_from_path(css_path)
+            screen = Gdk.Screen.get_default()
+            if screen:
+                Gtk.StyleContext.add_provider_for_screen(
+                    screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+        except Exception:
+            pass
+    _css_loaded = True
+
+
 class FedoraHealthWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Fedora Health")
         self.set_default_size(980, 700)
+        _ensure_css()
 
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()

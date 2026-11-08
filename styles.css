@@ -1,141 +1,30 @@
-/* styles.css - Fedora Health GUI theming */
+/* Minimal styles - only fixes, no layout changes */
 @define-color brand #2A74B4;
 @define-color success #4CAF50;
-@define-color warning #E8BC2D;
 @define-color error #F44336;
-@define-color surface #F5F7FA;
-@define-color surface-variant #E4E7EC;
-@define-on-surface #2D3748;
-@define-on-surface-variant #4A5568;
 
-/* Base palette */
-.widget {
-    -Gtk-button-default-height: 48;
-    -Gtk-button-default-width: 48;
-}
-
-/* Header bar */
+/* Just add background color to header and mild button styling */
 .header-bar {
-    background-color: @background_color_dark;
-    color: @on_background_color;
+    background-color: #2D3748;
+    color: #F5F7FA;
 }
 
-/* View stack switcher */
-.view-switcher {
-    padding: 6px 12px;
-}
-
-/* Action rows with better visuals */
 .action-row {
-    margin: 2px 0;
-    border-radius: 6px;
-    min-height: 48px;
-    padding: 4px 8px;
+    margin: 4px 0;
 }
 
-/* Severity dots - improved with better contrast */
-.severity-ok {
-    color: @success;
-    font-weight: bold;
-    icon-size: 12px;
-}
-.severity-warn {
-    color: @warning;
-    font-weight: bold;
-    icon-size: 12px;
-}
-.severity-error {
-    color: @error;
-    font-weight: bold;
-    icon-size: 12px;
-}
-
-/* Buttons */
+/* Suggested action buttons */
 .button-suggested {
-    background-color: @brand;
     color: white;
-    border-radius: 4px;
-    padding: 4px 8px;
-}
-.button-suggested:hover {
-    background-color: #3a86cc;
-}
-.button-suggested:active {
-    background-color: #2a6c9f;
 }
 
+/* Destructive action buttons */
 .button-destructive {
-    background-color: @error;
-    color: white;
-    border-radius: 4px;
-    padding: 4px 8px;
-}
-.button-destructive:hover {
-    background-color: #d23a3a;
-}
-.button-destructive:active {
-    background-color: #c53030;
+    color: #F44336;
 }
 
-.button-primary {
-    background-color: @brand;
-    color: white;
-    border-radius: 4px;
-    padding: 4px 8px;
-}
-.button-primary:hover {
-    background-color: #3a86cc;
-}
-
-/* Focus ring for keyboard navigation - improved */
+/* Focus ring */
 .widget:focus {
-    outline: 2px solid @brand;
+    outline: 2px solid #2A74B4;
     outline-offset: 2px;
-    background-color: rgba(42, 116, 180, 0.1);
-}
-
-/* High contrast adjustments */
-@media (forced-colors: active) {
-    .severity-ok { color: CanvasText; }
-    .severity-warn { color: CanvasText; }
-    .severity-error { color: CanvasText; }
-    .button-suggested { -forced-color-adjust: none; }
-    .button-destructive { -forced-color-adjust: none; }
-}
-
-/* Tooltip styling */
-.tooltip {
-    background-color: @surface;
-    color: @on-surface;
-    border-radius: 4px;
-    padding: 4px 8px;
-}
-
-/* Card style */
-.card {
-    background-color: white;
-    border-radius: 8px;
-    margin: 8px 0;
-    padding: 12px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-}
-
-/* Subtle divider */
-.separator {
-    margin: 8px 0;
-    border-color: @surface-variant;
-}
-
-/* Icon styling */
-.icon-brand {
-    color: @brand;
-}
-.icon-success {
-    color: @success;
-}
-.icon-warning {
-    color: @warning;
-}
-.icon-error {
-    color: @error;
 }
